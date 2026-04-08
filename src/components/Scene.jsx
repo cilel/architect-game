@@ -1,75 +1,71 @@
 import React from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid, PerspectiveCamera } from '@react-three/drei';
+import { OrbitControls } from '@react-three/drei';
 
 // 单个方块组件
-function Block({ position }) {
+const Block = ({ block, selected, onSelect, blockTypes }) => {
+  const typeInfo = blockTypes[block.type];
   return (
-    <mesh position={position} castShadow receiveShadow>
+    <mesh
+      position={block.position}
+      onClick={(e) => {
+        e.stopPropagation(); // 阻止事件冒泡到地面
+        onSelect(block.id);
+      }}
+    >
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color="#4ade80" />
+      <meshStandardMaterial
+        color={typeInfo.color}
+        transparent={typeInfo.transparent}
+        opacity={typeInfo.opacity}
+        emissive={selected ? '#555555' : '#000000'} // 选中时高亮发光
+        roughness={typeInfo.id === 'window' ? 0.1 : 0.8} // 玻璃更光滑
+      />
     </mesh>
   );
-}
+};
 
-const Scene = ({ blocks, onAddBlock }) => {
-  const handlePointerDown = (e) => {
-    // 停止事件冒泡，防止点击方块时也触发地面点击
+// 交互地面组件
+const Ground = ({ onAddBlock }) => {
+  const handleClick = (e) => {
     e.stopPropagation();
-    
-    // 获取点击点的坐标
-    const { x, y, z } = e.point;
-    
-    // 核心算法：网格吸附 (Grid Snapping)
-    // 假设网格大小为 1，将坐标四舍五入到最近的整数
-    // y + 0.5 是为了让方块底部刚好贴在地面上
-    const snapX = Math.round(x);
-    const snapZ = Math.round(z);
-    const snapY = 0.5;
-    
-    onAddBlock(snapX, snapY, snapZ);
+    // 吸附到网格 (方块大小 1x1x1，Y轴偏移0.5使其立于网格之上)
+    const x = Math.round(e.point.x);
+    const y = 0.5;
+    const z = Math.round(e.point.z);
+    onAddBlock([x, y, z]);
   };
-
   return (
-    <Canvas shadows>
-      {/* 1. 环境光与灯光 */}
-      <ambientLight intensity={0.7} />
-      <pointLight position={[10, 10, 10]} castShadow />
-      <directionalLight position={[-5, 5, 5]} intensity={1} castShadow />
-      
-      {/* 2. 相机控制 */}
-      <PerspectiveCamera makeDefault position={[10, 10, 10]} />
-      <OrbitControls 
-        makeDefault 
-        minPolarAngle={0} 
-        maxPolarAngle={Math.PI / 2.1}
-        enablePan={true}
-        enableZoom={true}
-      />
-      
-      {/* 3. 网格地面 (Clickable Area) */}
-      <Grid 
-        infiniteGrid 
-        fadeDistance={50} 
-        sectionSize={5} 
-        cellSize={1} 
-        sectionColor="#666" 
-        cellColor="#999" 
-      />
-      
-      {/* 隐形的物理平面，用于接收点击事件 */}
-      <mesh 
-        rotation={[-Math.PI / 2, 0, 0]} 
-        position={[0, -0.01, 0]} 
-        onPointerDown={handlePointerDown}
-      >
-        <planeGeometry args={[100, 100]} />
-        <meshStandardMaterial transparent opacity={0} />
-      </mesh>
-      
-      {/* 4. 渲染所有已放置的方块 */}
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, 0, 0]}
+      onClick={handleClick}
+    >
+      <planeGeometry args={[100, 100]} />
+      <meshBasicMaterial visible={false} /> {/* 透明拦截层，专门用于捕捉点击 */}
+    </mesh>
+  );
+};
+
+const Scene = ({ blocks, onAddBlock, selectedId, setSelectedId, blockTypes }) => {
+  return (
+    <Canvas
+      camera={{ position: [5, 5, 5], fov: 50 }}
+      onClick={() => setSelectedId(null)} // 点击空白处取消选中
+    >
+      <ambientLight intensity={0.6} />
+      <directionalLight position={[10, 10, 5]} intensity={1.2} />
+      <OrbitControls makeDefault />
+      <gridHelper args={[30, 30]} />
+      <Ground onAddBlock={onAddBlock} />
       {blocks.map((block) => (
-        <Block key={block.id} position={block.position} />
+        <Block
+          key={block.id}
+          block={block}
+          selected={block.id === selectedId}
+          onSelect={setSelectedId}
+          blockTypes={blockTypes}
+        />
       ))}
     </Canvas>
   );

@@ -1,46 +1,99 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Scene from './components/Scene';
+import Palette from './components/Palette';
+import { useHistory } from './state/history';
+
+// 预定义方块属性字典
+export const BLOCK_TYPES = {
+  wall: {
+    id: 'wall',
+    name: '墙体',
+    color: '#808080',
+    transparent: false,
+    opacity: 1
+  },
+  window: {
+    id: 'window',
+    name: '窗户',
+    color: '#87CEEB',
+    transparent: true,
+    opacity: 0.6
+  },
+  door: {
+    id: 'door',
+    name: '门',
+    color: '#8B4513',
+    transparent: false,
+    opacity: 1
+  },
+};
 
 function App() {
-  const [blocks, setBlocks] = useState([]);
+  const { current: blocks, push: setBlocks, undo, redo } = useHistory([]);
+  const [activeType, setActiveType] = useState('wall');
+  const [selectedId, setSelectedId] = useState(null);
 
-  // 处理点击地面放置方块的逻辑
-  const addBlock = (x, y, z) => {
-    const newBlock = { 
-      id: Date.now(), 
-      position: [x, y, z] 
+  // 全局键盘事件监听
+  const handleKeyDown = useCallback((e) => {
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const modifierKey = isMac ? e.metaKey : e.ctrlKey;
+
+    if (modifierKey && e.key.toLowerCase() === 'z') {
+      if (e.shiftKey) redo(); // 支持 Ctrl+Shift+Z 重做
+      else undo();
+    } else if (modifierKey && e.key.toLowerCase() === 'y') {
+      redo(); // 支持 Ctrl+Y 重做
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedId) {
+        // 删除方块，并将新状态推入历史记录
+        setBlocks(blocks.filter(b => b.id !== selectedId));
+        setSelectedId(null);
+      }
+    }
+  }, [blocks, selectedId, setBlocks, undo, redo]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  const handleAddBlock = (position) => {
+    // 检查是否在同一位置已经有方块
+    const isOccupied = blocks.some(
+      b => b.position[0] === position[0] &&
+           b.position[1] === position[1] &&
+           b.position[2] === position[2]
+    );
+    if (isOccupied) return;
+
+    const newBlock = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      position,
+      type: activeType
     };
+    // 将新方块数组推入历史记录
     setBlocks([...blocks, newBlock]);
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
-      {/* UI 层 */}
-      <div style={{ 
-        position: 'absolute', 
-        top: 20, 
-        left: 20, 
-        zIndex: 10, 
-        padding: '15px', 
-        background: 'rgba(255,255,255,0.9)', 
-        borderRadius: '8px', 
-        fontFamily: 'sans-serif',
-        pointerEvents: 'none',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.1)'
-      }}>
-        <h2 style={{ margin: '0 0 10px 0', color: '#333' }}>🏗️ Archilab Phase 1</h2>
-        <ul style={{ margin: 0, paddingLeft: '20px', color: '#555', lineHeight: '1.8' }}>
-          <li>🖱️ 左键点击地面：放置方块</li>
-          <li>🔄 右键/按住：旋转视角</li>
-          <li>🔍 滚轮：缩放</li>
-        </ul>
-        <p style={{ margin: '10px 0 0 0', color: '#333', fontWeight: 'bold' }}>
-          当前建筑组件数: {blocks.length}
-        </p>
-      </div>
-
-      {/* 3D 场景层 */}
-      <Scene blocks={blocks} onAddBlock={addBlock} />
+    <div style={{
+      width: '100vw',
+      height: '100vh',
+      position: 'relative',
+      overflow: 'hidden'
+    }}>
+      <Palette
+        activeType={activeType}
+        setActiveType={setActiveType}
+        blockTypes={BLOCK_TYPES}
+      />
+      <Scene
+        blocks={blocks}
+        onAddBlock={handleAddBlock}
+        selectedId={selectedId}
+        setSelectedId={setSelectedId}
+        blockTypes={BLOCK_TYPES}
+      />
     </div>
   );
 }
