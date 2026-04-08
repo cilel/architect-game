@@ -5,6 +5,7 @@ import { OrbitControls } from '@react-three/drei';
 // 单个方块组件
 const Block = ({ block, selected, onSelect, blockTypes }) => {
   const typeInfo = blockTypes[block.type];
+  const size = typeInfo.size; // [width, height, depth]
   return (
     <mesh
       position={block.position}
@@ -13,13 +14,14 @@ const Block = ({ block, selected, onSelect, blockTypes }) => {
         onSelect(block.id);
       }}
     >
-      <boxGeometry args={[1, 1, 1]} />
+      {/* 使用不同尺寸的几何体 */}
+      <boxGeometry args={size} />
       <meshStandardMaterial
         color={typeInfo.color}
         transparent={typeInfo.transparent}
         opacity={typeInfo.opacity}
         emissive={selected ? '#555555' : '#000000'} // 选中时高亮发光
-        roughness={typeInfo.id === 'window' ? 0.1 : 0.8} // 玻璃更光滑
+        roughness={typeInfo.roughness}
       />
     </mesh>
   );

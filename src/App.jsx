@@ -4,27 +4,34 @@ import Palette from './components/Palette';
 import { useHistory } from './state/history';
 
 // 预定义方块属性字典
+// size: [width, height, depth] - 不同类型有不同尺寸
 export const BLOCK_TYPES = {
   wall: {
     id: 'wall',
     name: '墙体',
     color: '#808080',
+    size: [1, 1, 1],      // 立方体
     transparent: false,
-    opacity: 1
+    opacity: 1,
+    roughness: 0.8
   },
   window: {
     id: 'window',
     name: '窗户',
     color: '#87CEEB',
+    size: [1.0, 0.8, 0.1], // 扁平宽玻璃
     transparent: true,
-    opacity: 0.6
+    opacity: 0.6,
+    roughness: 0.1         // 玻璃光滑
   },
   door: {
     id: 'door',
     name: '门',
     color: '#8B4513',
+    size: [0.3, 1.0, 0.1], // 竖长门板
     transparent: false,
-    opacity: 1
+    opacity: 1,
+    roughness: 0.9
   },
 };
 
@@ -66,9 +73,14 @@ function App() {
     );
     if (isOccupied) return;
 
+    // 根据方块类型计算Y偏移，使方块底部落在地面上
+    const typeInfo = BLOCK_TYPES[activeType];
+    const height = typeInfo.size[1];
+    const yOffset = height / 2; // 几何体中心Y坐标
+
     const newBlock = {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-      position,
+      position: [position[0], yOffset, position[2]], // 使用调整后的Y坐标
       type: activeType
     };
     // 将新方块数组推入历史记录
