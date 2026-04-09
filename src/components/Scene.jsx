@@ -1,200 +1,266 @@
 import React, { useRef, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, MeshTransmissionMaterial } from '@react-three/drei';
+import * as THREE from 'three';
 
-// 改进的方块模型 - 带边框和细节
-function BlockModel({ type, size, color, transparent, opacity, roughness }) {
-  const h = size[1];
-  const w = size[0];
-  const d = size[2];
+// 动态包围盒吸附算法
+const calculatePlacement = (e, currentBlockType, typeInfo, rotationStep) => {
+  const normalMatrix = new THREE.Matrix3().getNormalMatrix(e.object.matrixWorld);
+  const worldNormal = e.face.normal.clone().applyMatrix3(normalMatrix).normalize().round();
 
-  if (type === 'window') {
-    return (
-      <group>
-        <mesh position={[0, h/2 - 0.05, 0]}>
-          <boxGeometry args={[w + 0.05, 0.1, d]} />
-          <meshStandardMaterial color="#555555" />
-        </mesh>
-        <mesh position={[0, -h/2 + 0.05, 0]}>
-          <boxGeometry args={[w + 0.05, 0.1, d]} />
-          <meshStandardMaterial color="#555555" />
-        </mesh>
-        <mesh position={[w/2 - 0.05, 0, 0]}>
-          <boxGeometry args={[0.1, h - 0.1, d]} />
-          <meshStandardMaterial color="#555555" />
-        </mesh>
-        <mesh position={[-w/2 + 0.05, 0, 0]}>
-          <boxGeometry args={[0.1, h - 0.1, d]} />
-          <meshStandardMaterial color="#555555" />
-        </mesh>
-        <mesh position={[0, 0, 0]}>
-          <boxGeometry args={[0.05, h - 0.2, d + 0.01]} />
-          <meshStandardMaterial color="#555555" />
-        </mesh>
-        <mesh position={[0, 0, 0]}>
-          <boxGeometry args={[w - 0.2, 0.05, d + 0.01]} />
-          <meshStandardMaterial color="#555555" />
-        </mesh>
-        <mesh position={[0, 0, 0]}>
-          <boxGeometry args={[w - 0.15, h - 0.15, d + 0.01]} />
-          <meshStandardMaterial color="#87CEEB" transparent={true} opacity={0.5} roughness={0.1} metalness={0.1} />
-        </mesh>
-      </group>
-    );
+  // 核心：当前方块由于旋转产生的真实长宽高
+  const isRotated = rotationStep % 2 !== 0;
+  const curSize = isRotated ? [typeInfo.size[2], typeInfo.size[1], typeInfo.size[0]] : [...typeInfo.size];
+
+  let pos = [0, 0, 0];
+  let rot = [0, rotationStep * (Math.PI / 2), 0];
+
+  // 更高精度的网格对齐 (0.1单位，允许墙体贴边)
+  const snap = (val) => Math.round(val * 10) / 10;
+
+  if (e.object.name === 'ground') {
+    pos = [snap(e.point.x), curSize[1] / 2, snap(e.point.z)];
+  } else {
+    const targetPos = e.object.userData.position;
+    const targetType = e.object.userData.type;
+    const targetSizeRaw = e.object.userData.size || [1, 1, 1];
+    const targetRot = e.object.userData.rotation || [0, 0, 0];
+
+    // 目标方块的真实长宽高
+    const tRotStep = Math.round(targetRot[1] / (Math.PI / 2));
+    const tIsRot = tRotStep % 2 !== 0;
+    const tSize = tIsRot ? [targetSizeRaw[2], targetSizeRaw[1], targetSizeRaw[0]] : [...targetSizeRaw];
+
+    const isPanel = (type) => ['wall', 'window', 'door'].some(k => type.includes(k));
+
+    const curIsPanel = isPanel(currentBlockType);
+    const targetIsPanel = isPanel(targetType);
+
+    // 垂直堆叠 (比如地板上建墙、墙上盖天花板)
+    if (Math.abs(worldNormal.y) === 1) {
+      pos[1] = targetPos[1] + worldNormal.y * (tSize[1] / 2 + curSize[1] / 2);
+      pos[0] = snap(e.point.x);
+      pos[2] = snap(e.point.z);
+    }
+    // 横向拼接
+    else {
+      // 面板互联：墙连墙、墙连窗等，启用自动对齐轴向逻辑
+      if (curIsPanel && targetIsPanel) {
+        if (Math.abs(worldNormal.x) === 1) {
+          rot = [0, 0, 0]; // 强行对齐 X 轴
+          const fSize = [...typeInfo.size];
+          pos[0] = targetPos[0] + worldNormal.x * (tSize[0] / 2 + fSize[0] / 2);
+          pos[1] = targetPos[1];
+          pos[2] = snap(e.point.z); // 允许在 Z 轴滑动形成完美直角
+        } else {
+          rot = [0, Math.PI / 2, 0]; // 强行对齐 Z 轴
+          const fSize = [typeInfo.size[2], typeInfo.size[1], typeInfo.size[0]];
+          pos[0] = snap(e.point.x);
+          pos[1] = targetPos[1];
+          pos[2] = targetPos[2] + worldNormal.z * (tSize[2] / 2 + fSize[2] / 2);
+        }
+      }
+      // 常规侧面吸附
+      else {
+        pos[0] = targetPos[0] + worldNormal.x * (tSize[0] / 2 + curSize[0] / 2);
+        pos[1] = targetPos[1] + worldNormal.y * (tSize[1] / 2 + curSize[1] / 2);
+        pos[2] = targetPos[2] + worldNormal.z * (tSize[2] / 2 + curSize[2] / 2);
+        if (Math.abs(worldNormal.x) > 0.5) pos[2] = snap(e.point.z);
+        if (Math.abs(worldNormal.z) > 0.5) pos[0] = snap(e.point.x);
+      }
+    }
   }
 
-  if (type === 'door') {
-    return (
-      <group>
-        <mesh position={[w/2 + 0.03, h/2, 0]}>
-          <boxGeometry args={[0.06, h + 0.1, d + 0.02]} />
-          <meshStandardMaterial color="#5c3d2e" roughness={0.9} />
-        </mesh>
-        <mesh position={[-w/2 - 0.03, h/2, 0]}>
-          <boxGeometry args={[0.06, h + 0.1, d + 0.02]} />
-          <meshStandardMaterial color="#5c3d2e" roughness={0.9} />
-        </mesh>
-        <mesh position={[0, h + 0.03, 0]}>
-          <boxGeometry args={[w + 0.06, 0.06, d + 0.02]} />
-          <meshStandardMaterial color="#5c3d2e" roughness={0.9} />
-        </mesh>
-        <mesh position={[0, 0, 0]}>
-          <boxGeometry args={[w - 0.02, h - 0.02, d]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.8} />
-        </mesh>
-        <mesh position={[w/2 - 0.1, 0, d/2 + 0.02]}>
-          <boxGeometry args={[0.05, 0.1, 0.05]} />
-          <meshStandardMaterial color="#c0c0c0" metalness={0.8} roughness={0.2} />
-        </mesh>
-      </group>
-    );
-  }
-
-  return (
-    <group>
-      <mesh>
-        <boxGeometry args={size} />
-        <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} roughness={roughness} />
-      </mesh>
-    </group>
-  );
-}
-
-const Block = ({ block, selected, onSelect, blockTypes }) => {
-  const typeInfo = blockTypes[block.type];
-  return (
-    <group
-      position={block.position}
-      rotation={block.rotation || [0, 0, 0]}
-    >
-      <mesh
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(block.id);
-        }}
-      >
-        <boxGeometry args={typeInfo.size} />
-        <meshStandardMaterial
-          color={typeInfo.color}
-          transparent={typeInfo.transparent}
-          opacity={typeInfo.opacity}
-          emissive={selected ? '#FFD700' : '#000000'}
-          emissiveIntensity={selected ? 0.3 : 0}
-          roughness={typeInfo.roughness}
-        />
-      </mesh>
-      {selected && (
-        <mesh>
-          <boxGeometry args={[typeInfo.size[0] * 1.02, typeInfo.size[1] * 1.02, typeInfo.size[2] * 1.02]} />
-          <meshBasicMaterial color="#FFD700" wireframe transparent opacity={0.5} />
-        </mesh>
-      )}
-    </group>
-  );
+  return { position: pos, rotation: rot };
 };
 
-const Ground = ({ onAddBlock, ghostRef, currentRotationStep, showPreview }) => {
-  const handleClick = (e) => {
-    e.stopPropagation();
-    const x = Math.round(e.point.x);
-    const y = 0.5;
-    const z = Math.round(e.point.z);
-    onAddBlock([x, y, z]);
-  };
+// 高级 3D 模型渲染器
+const BlockModel = ({ type, size, color, selected, isGhost }) => {
+  const typeLower = type ? type.toString().toLowerCase() : '';
+  const [w, h, d] = size || [1, 1, 1];
+  const emissiveColor = selected && !isGhost ? '#888888' : '#000000';
+  const opacity = isGhost ? 0.4 : 1;
 
-  const handlePointerMove = (e) => {
-    e.stopPropagation();
-    if (ghostRef.current && showPreview) {
-      const x = Math.round(e.point.x);
-      const y = 0.5;
-      const z = Math.round(e.point.z);
-      ghostRef.current.position.set(x, y, z);
-      ghostRef.current.rotation.y = currentRotationStep * (Math.PI / 2);
-      ghostRef.current.visible = true;
-    }
-  };
+  const BaseMat = ({ col }) => (
+    <meshStandardMaterial
+      color={col || color}
+      emissive={emissiveColor}
+      transparent={isGhost}
+      opacity={opacity}
+      depthWrite={!isGhost}
+    />
+  );
 
-  const handlePointerOut = () => {
-    if (ghostRef.current) {
-      ghostRef.current.visible = false;
-    }
-  };
+  if (typeLower.includes('window')) {
+    const t = 0.08; // 窗框厚度
+    return (
+      <group>
+        <mesh position={[0, h/2 - t/2, 0]}>
+          <boxGeometry args={[w, t, d+0.04]} />
+          <BaseMat/>
+        </mesh>
+        <mesh position={[0, -h/2 + t/2, 0]}>
+          <boxGeometry args={[w, t, d+0.04]} />
+          <BaseMat/>
+        </mesh>
+        <mesh position={[-w/2 + t/2, 0, 0]}>
+          <boxGeometry args={[t, h - t*2, d+0.04]} />
+          <BaseMat/>
+        </mesh>
+        <mesh position={[w/2 - t/2, 0, 0]}>
+          <boxGeometry args={[t, h - t*2, d+0.04]} />
+          <BaseMat/>
+        </mesh>
+        <mesh position={[0, 0, 0]}>
+          <boxGeometry args={[w - t*2, h - t*2, d * 0.2]} />
+          {isGhost ? (
+            <meshStandardMaterial color="#aaddff" transparent opacity={0.3} depthWrite={false} />
+          ) : (
+            <MeshTransmissionMaterial backside samples={4} thickness={0.1} transmission={0.95} roughness={0.05} color="#c2e2ff" />
+          )}
+        </mesh>
+      </group>
+    );
+  }
 
+  if (typeLower.includes('door')) {
+    const t = 0.1;
+    return (
+      <group>
+        <mesh position={[0, h/2 - t/2, 0]}>
+          <boxGeometry args={[w, t, d+0.02]} />
+          <BaseMat/>
+        </mesh>
+        <mesh position={[-w/2 + t/2, -t/2, 0]}>
+          <boxGeometry args={[t, h - t, d+0.02]} />
+          <BaseMat/>
+        </mesh>
+        <mesh position={[w/2 - t/2, -t/2, 0]}>
+          <boxGeometry args={[t, h - t, d+0.02]} />
+          <BaseMat/>
+        </mesh>
+        <mesh position={[0, -t/2, 0]}>
+          <boxGeometry args={[w - t*2, h - t, d * 0.4]} />
+          <BaseMat col="#8b5a2b" />
+        </mesh>
+        {/* 金色门把手 */}
+        <mesh position={[w/2 - t*2, 0, d*0.35]}>
+          <sphereGeometry args={[0.04]} />
+          <BaseMat col="#ffd700" />
+        </mesh>
+        <mesh position={[w/2 - t*2, 0, -d*0.35]}>
+          <sphereGeometry args={[0.04]} />
+          <BaseMat col="#ffd700" />
+        </mesh>
+      </group>
+    );
+  }
+
+  if (typeLower.includes('wall')) {
+    return (
+      <group>
+        <mesh position={[0, 0, 0]}>
+          <boxGeometry args={[w, h, d]} />
+          <BaseMat/>
+        </mesh>
+        {/* 底部踢脚线 */}
+        <mesh position={[0, -h/2 + 0.05, 0]}>
+          <boxGeometry args={[w + 0.01, 0.1, d + 0.02]} />
+          <BaseMat col="#dcdcdc"/>
+        </mesh>
+      </group>
+    );
+  }
+
+  // 默认 (地板、天花板)
   return (
-    <mesh
-      rotation={[-Math.PI / 2, 0, 0]}
-      position={[0, 0, 0]}
-      onClick={handleClick}
-      onPointerMove={handlePointerMove}
-      onPointerOut={handlePointerOut}
-    >
-      <planeGeometry args={[100, 100]} />
-      <meshBasicMaterial visible={false} />
+    <mesh>
+      <boxGeometry args={[...size]} />
+      <BaseMat/>
     </mesh>
   );
 };
 
-const Scene = ({ blocks, onAddBlock, selectedId, setSelectedId, blockTypes, currentBlockType, rotation, showPreview }) => {
+const Scene = ({ blocks, onAddBlock, selectedId, setSelectedId, blockTypes, currentBlockType, rotationStep }) => {
   const ghostRef = useRef();
   const ghostTypeInfo = currentBlockType && blockTypes ? blockTypes[currentBlockType] : { size: [1, 1, 1], color: '#ffffff' };
 
-  useEffect(() => {
-    if (ghostRef.current) {
-      ghostRef.current.rotation.y = rotation * (Math.PI / 2);
-    }
-  }, [rotation]);
+  const handlePointerMove = (e) => {
+    e.stopPropagation();
+    if (!ghostRef.current) return;
+    const { position, rotation } = calculatePlacement(e, currentBlockType, ghostTypeInfo, rotationStep);
+    ghostRef.current.position.set(...position);
+    ghostRef.current.rotation.set(...rotation);
+    ghostRef.current.visible = true;
+  };
+
+  const handleClick = (e) => {
+    e.stopPropagation();
+    const { position, rotation } = calculatePlacement(e, currentBlockType, ghostTypeInfo, rotationStep);
+    onAddBlock({ type: currentBlockType, position, rotation });
+  };
 
   return (
-    <Canvas camera={{ position: [5, 5, 5], fov: 50 }} onClick={() => setSelectedId(null)}>
+    <Canvas
+      camera={{ position: [5, 5, 5], fov: 50 }}
+      onPointerMissed={() => setSelectedId(null)}
+    >
       <ambientLight intensity={0.6} />
       <directionalLight position={[10, 10, 5]} intensity={1.2} />
       <OrbitControls makeDefault />
-      <gridHelper args={[30, 30]} />
+      <gridHelper args={[30, 30, '#cccccc', '#eeeeee']} />
 
-      <Ground onAddBlock={onAddBlock} ghostRef={ghostRef} currentRotationStep={rotation} showPreview={showPreview} />
+      {/* 地面 */}
+      <mesh
+        name="ground"
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 0]}
+        onClick={handleClick}
+        onPointerMove={handlePointerMove}
+        onPointerOut={() => ghostRef.current && (ghostRef.current.visible = false)}
+      >
+        <planeGeometry args={[100, 100]} />
+        <meshBasicMaterial visible={false} />
+      </mesh>
 
-      {/* 只在 showPreview=true 时渲染 Ghost Block */}
-      {showPreview && (
-        <mesh ref={ghostRef}>
-          <boxGeometry args={ghostTypeInfo.size} />
-          <meshStandardMaterial
-            color={ghostTypeInfo.color}
-            transparent={true}
-            opacity={0.4}
-            depthWrite={false}
-          />
-        </mesh>
-      )}
+      {/* 已放置的方块 */}
+      {blocks.map((block) => {
+        const typeInfo = blockTypes[block.type];
+        return (
+          <group key={block.id} position={block.position} rotation={block.rotation}>
+            <BlockModel
+              type={block.type}
+              size={typeInfo.size}
+              color={typeInfo.color}
+              selected={block.id === selectedId}
+              isGhost={false}
+            />
+            <mesh
+              userData={{ size: typeInfo.size, position: block.position, type: block.type, rotation: block.rotation }}
+              onClick={handleClick}
+              onContextMenu={(e) => {
+                e.stopPropagation();
+                setSelectedId(block.id);
+              }}
+              onPointerMove={handlePointerMove}
+              onPointerOut={() => ghostRef.current && (ghostRef.current.visible = false)}
+            >
+              <boxGeometry args={typeInfo.size} />
+              <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+            </mesh>
+          </group>
+        );
+      })}
 
-      {blocks.map((block) => (
-        <Block
-          key={block.id}
-          block={block}
-          selected={block.id === selectedId}
-          onSelect={setSelectedId}
-          blockTypes={blockTypes}
+      {/* Ghost 预览层 */}
+      <group ref={ghostRef} visible={false} raycast={() => null}>
+        <BlockModel
+          type={currentBlockType}
+          size={ghostTypeInfo.size}
+          color={ghostTypeInfo.color}
+          isGhost={true}
         />
-      ))}
+      </group>
     </Canvas>
   );
 };
